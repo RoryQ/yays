@@ -192,6 +192,46 @@ is_student: false
   price: 30
 `,
 		},
+		"DefaultNestedMappingObjects_SortsAllObjectsInNestedMappingAlphanumerically": {
+			paths:    []string{"packages[*].interfaces"},
+			sortType: "alphanumeric",
+			content: `
+packages:
+  pkg/example:
+    interfaces:
+      - t
+      - q
+      - a
+  pkg/example2:
+    interfaces:
+      - f
+      - b
+      - p
+  pkg/example3:
+    interfaces:
+      - n
+      - m
+      - p
+`,
+			expected: `
+packages:
+  pkg/example:
+    interfaces:
+      - a
+      - q
+      - t
+  pkg/example2:
+    interfaces:
+      - b
+      - f
+      - p
+  pkg/example3:
+    interfaces:
+      - m
+      - n
+      - p
+`,
+		},
 		"DefaultNestedSequenceObjects_SortsAllObjectsInNestedSequenceAlphanumerically": {
 			paths:    []string{"packages[*].interfaces"},
 			sortType: "alphanumeric",

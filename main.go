@@ -15,7 +15,7 @@ import (
 // CLI represents the command-line interface structure
 type CLI struct {
 	InputFile string   `name:"file" short:"f" help:"Input YAML file path" type:"existingfile" required:""`
-	YamlPaths []string `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop or index sequences (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order." required:""`
+	YamlPaths []string `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop over sequences or mappings with [*], or index sequences with [N] (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order." required:""`
 	Write     bool     `name:"write" short:"w" help:"Write changes back to the input file instead of printing to stdout"`
 	SortType  string   `name:"sort" short:"t" help:"Sort type for mapping keys: 'alphanumeric' (default) or 'human' (common keys first, then the rest alphanumeric)" enum:"alphanumeric,human" default:"alphanumeric"`
 	Verbose   bool     `name:"verbose" short:"v" help:"Verbose output"`
@@ -271,10 +271,17 @@ func resolveTargets(root *yaml.Node, steps []pathStep) ([]*yaml.Node, error) {
 			}
 		case stepAll:
 			for _, node := range cur {
-				if node.Kind != yaml.SequenceNode {
-					return nil, fmt.Errorf("selection [*] requires a sequence target (got kind=%d)", node.Kind)
+				switch node.Kind {
+				case yaml.SequenceNode:
+					next = append(next, node.Content...)
+				case yaml.MappingNode:
+					// iterate over all values in the mapping
+					for i := 0; i < len(node.Content); i += 2 {
+						next = append(next, node.Content[i+1])
+					}
+				default:
+					return nil, fmt.Errorf("selection [*] requires a sequence or mapping target (got kind=%d)", node.Kind)
 				}
-				next = append(next, node.Content...)
 			}
 		}
 		cur = next

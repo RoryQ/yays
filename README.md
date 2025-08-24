@@ -18,7 +18,7 @@ Yet Another Yaml Sorter
 Flags:
   -h, --help                       Show context-sensitive help.
   -f, --file=STRING                Input YAML file path
-  -p, --yaml-path=YAML-PATH,...    YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop or index sequences (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order.
+  -p, --yaml-path=YAML-PATH,...    YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop over sequences or mappings with [*], or index sequences with [N] (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order.
   -w, --write                      Write changes back to the input file instead of printing to stdout
   -t, --sort="alphanumeric"        Sort type for mapping keys: 'alphanumeric' (default) or 'human' (common keys first, then the rest alphanumeric)
   -v, --verbose                    Verbose output
