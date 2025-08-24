@@ -192,6 +192,46 @@ is_student: false
   price: 30
 `,
 		},
+		"DefaultNestedSequenceObjects_SortsAllObjectsInNestedSequenceAlphanumerically": {
+			paths:    []string{"packages[*].interfaces"},
+			sortType: "alphanumeric",
+			content: `
+packages:
+  - package: pkg/example
+    interfaces:
+      - t
+      - q
+      - a
+  - package: pkg/example2
+    interfaces:
+      - f
+      - b
+      - p
+  - package: pkg/example3
+    interfaces:
+      - n
+      - m
+      - p
+`,
+			expected: `
+packages:
+  - package: pkg/example
+    interfaces:
+      - a
+      - q
+      - t
+  - package: pkg/example2
+    interfaces:
+      - b
+      - f
+      - p
+  - package: pkg/example3
+    interfaces:
+      - m
+      - n
+      - p
+`,
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

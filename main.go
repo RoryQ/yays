@@ -15,7 +15,7 @@ import (
 // CLI represents the command-line interface structure
 type CLI struct {
 	InputFile string   `name:"file" short:"f" help:"Input YAML file path" type:"existingfile" required:""`
-	YamlPaths []string `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Optional trailing bracket selector for sequences: 'path' sorts the sequence by first field; 'path[*]' sorts keys of all elements; 'path[0]' sorts keys of element 0. You can still use numeric tokens to index sequences in the middle, e.g. 'servers.0.roles'. Repeat -p to process multiple paths in order." required:""`
+	YamlPaths []string `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop or index sequences (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order." required:""`
 	Write     bool     `name:"write" short:"w" help:"Write changes back to the input file instead of printing to stdout"`
 	SortType  string   `name:"sort" short:"t" help:"Sort type for mapping keys: 'alphanumeric' (default) or 'human' (common keys first, then the rest alphanumeric)" enum:"alphanumeric,human" default:"alphanumeric"`
 	Verbose   bool     `name:"verbose" short:"v" help:"Verbose output"`
@@ -110,48 +110,28 @@ func (cli CLI) rankSortType(key string) int {
 func (cli CLI) SortYaml(doc *yaml.Node) error {
 	// Navigate and sort for each provided path, in order
 	for _, path := range cli.YamlPaths {
-		baseTokens, sel, selIdx, err := parsePathSelection(path)
+		steps, err := parsePathSteps(path)
 		if err != nil {
 			return fmt.Errorf("invalid path %q: %v", path, err)
 		}
-		target, err := navigateToPath(doc, baseTokens)
+		targets, err := resolveTargets(doc, steps)
 		if err != nil {
 			return fmt.Errorf("failed to navigate to path %q: %v", path, err)
 		}
 
-		switch sel {
-		case selNone:
-			// Default behavior at the target level
+		looping := stepsContainLoop(steps)
+		for _, target := range targets {
 			switch target.Kind {
 			case yaml.MappingNode:
 				cli.sortMappingNodeKeys(target)
 			case yaml.SequenceNode:
-				// Only sort the sequence by the first field
+				// Sort the sequence by the first field
 				sortSequenceByFirstField(target)
 			default:
-				return fmt.Errorf("target at path %q must be a mapping or sequence (got kind=%d)", path, target.Kind)
-			}
-		case selIndex:
-			// Sort keys of a specific element in a sequence
-			if target.Kind != yaml.SequenceNode {
-				return fmt.Errorf("path %q selection by index requires a sequence target (got kind=%d)", path, target.Kind)
-			}
-			if selIdx < 0 || selIdx >= len(target.Content) {
-				return fmt.Errorf("index %d out of range for path %q (len=%d)", selIdx, path, len(target.Content))
-			}
-			el := target.Content[selIdx]
-			if el.Kind == yaml.MappingNode {
-				cli.sortMappingNodeKeys(el)
-			}
-		case selAll:
-			// Sort keys of all elements in a sequence
-			if target.Kind != yaml.SequenceNode {
-				return fmt.Errorf("path %q selection [*] requires a sequence target (got kind=%d)", path, target.Kind)
-			}
-			for _, el := range target.Content {
-				if el.Kind == yaml.MappingNode {
-					cli.sortMappingNodeKeys(el)
+				if !looping { // preserve previous behavior: error only when not looping
+					return fmt.Errorf("target at path %q must be a mapping or sequence (got kind=%d)", path, target.Kind)
 				}
+				// when looping, silently skip non-sortable scalars
 			}
 		}
 	}
@@ -179,89 +159,127 @@ func (cli CLI) ReadFile() (*yaml.Node, int, error) {
 	return &root, detectIndentation(data), nil
 }
 
-func tokenizePath(path string) []string {
-	p := strings.TrimSpace(path)
-	if p == "" || p == "." {
-		return nil
-	}
-	// Simple dot-split tokenization; numeric tokens are treated as sequence indices.
-	return strings.Split(p, ".")
-}
-
-// selection indicates optional bracket selection at the end of a path
-// selNone: no bracket; selIndex: [N]; selAll: [*]
-type selection int
+type pathStepKind int
 
 const (
-	selNone selection = iota
-	selIndex
-	selAll
+	stepKey pathStepKind = iota
+	stepIndex
+	stepAll
 )
 
-// parsePathSelection parses an input path which may optionally end with a bracket selector
-// like [0] or [*]. It returns the base dot-path tokens (without the selector), the selection type,
-// and the index (for selIndex) or -1.
-func parsePathSelection(path string) ([]string, selection, int, error) {
-	p := strings.TrimSpace(path)
-	if p == "" {
-		return nil, selNone, -1, nil
-	}
-	if strings.HasSuffix(p, "]") {
-		lb := strings.LastIndex(p, "[")
-		if lb == -1 {
-			return nil, selNone, -1, fmt.Errorf("invalid path, unmatched ']' in %q", p)
-		}
-		inside := strings.TrimSpace(p[lb+1 : len(p)-1])
-		base := strings.TrimSpace(p[:lb])
-		if inside == "*" {
-			return tokenizePath(base), selAll, -1, nil
-		}
-		if n, err := strconv.Atoi(inside); err == nil {
-			return tokenizePath(base), selIndex, n, nil
-		}
-		return nil, selNone, -1, fmt.Errorf("invalid bracket selection %q", inside)
-	}
-	return tokenizePath(p), selNone, -1, nil
+type pathStep struct {
+	kind  pathStepKind
+	key   string
+	index int
 }
 
-func navigateToPath(root *yaml.Node, tokens []string) (*yaml.Node, error) {
+func parsePathSteps(path string) ([]pathStep, error) {
+	p := strings.TrimSpace(path)
+	if p == "" || p == "." {
+		return nil, nil
+	}
+	parts := strings.Split(p, ".")
+	var steps []pathStep
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" { // skip empty tokens from leading/trailing dots
+			continue
+		}
+		// Bracket-only token: [*] or [0]
+		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+			inside := strings.TrimSpace(part[1 : len(part)-1])
+			if inside == "*" {
+				steps = append(steps, pathStep{kind: stepAll})
+				continue
+			}
+			if n, err := strconv.Atoi(inside); err == nil {
+				steps = append(steps, pathStep{kind: stepIndex, index: n})
+				continue
+			}
+			return nil, fmt.Errorf("invalid bracket selection %q", inside)
+		}
+		// Token with suffix brackets: name[*] or name[0]
+		if lb := strings.Index(part, "["); lb != -1 && strings.HasSuffix(part, "]") {
+			name := part[:lb]
+			if name != "" {
+				steps = append(steps, pathStep{kind: stepKey, key: name})
+			}
+			inside := strings.TrimSpace(part[lb+1 : len(part)-1])
+			if inside == "*" {
+				steps = append(steps, pathStep{kind: stepAll})
+				continue
+			}
+			if n, err := strconv.Atoi(inside); err == nil {
+				steps = append(steps, pathStep{kind: stepIndex, index: n})
+				continue
+			}
+			return nil, fmt.Errorf("invalid bracket selection %q", inside)
+		}
+		steps = append(steps, pathStep{kind: stepKey, key: part})
+	}
+	return steps, nil
+}
+
+func stepsContainLoop(steps []pathStep) bool {
+	for _, s := range steps {
+		if s.kind == stepAll {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveTargets(root *yaml.Node, steps []pathStep) ([]*yaml.Node, error) {
+	// Start at the document's content root
+	cur := make([]*yaml.Node, 0, 1)
 	n := root
 	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
 		n = n.Content[0]
 	}
-	if len(tokens) == 0 {
-		return n, nil
-	}
+	cur = append(cur, n)
 
-	for _, tok := range tokens {
-		switch n.Kind {
-		case yaml.MappingNode:
-			found := false
-			for i := 0; i < len(n.Content); i += 2 {
-				k := n.Content[i]
-				if k.Value == tok {
-					n = n.Content[i+1]
-					found = true
-					break
+	for _, st := range steps {
+		next := make([]*yaml.Node, 0)
+		switch st.kind {
+		case stepKey:
+			for _, node := range cur {
+				if node.Kind != yaml.MappingNode {
+					return nil, fmt.Errorf("cannot descend into node kind=%d at token %q", node.Kind, st.key)
+				}
+				found := false
+				for i := 0; i < len(node.Content); i += 2 {
+					k := node.Content[i]
+					if k.Value == st.key {
+						next = append(next, node.Content[i+1])
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("key %q not found in mapping", st.key)
 				}
 			}
-			if !found {
-				return nil, fmt.Errorf("key %q not found in mapping", tok)
+		case stepIndex:
+			for _, node := range cur {
+				if node.Kind != yaml.SequenceNode {
+					return nil, fmt.Errorf("expected numeric index into sequence, got index %d with kind=%d", st.index, node.Kind)
+				}
+				if st.index < 0 || st.index >= len(node.Content) {
+					return nil, fmt.Errorf("index %d out of range [0,%d)", st.index, len(node.Content))
+				}
+				next = append(next, node.Content[st.index])
 			}
-		case yaml.SequenceNode:
-			idx, err := strconv.Atoi(tok)
-			if err != nil {
-				return nil, fmt.Errorf("expected numeric index into sequence, got %q", tok)
+		case stepAll:
+			for _, node := range cur {
+				if node.Kind != yaml.SequenceNode {
+					return nil, fmt.Errorf("selection [*] requires a sequence target (got kind=%d)", node.Kind)
+				}
+				next = append(next, node.Content...)
 			}
-			if idx < 0 || idx >= len(n.Content) {
-				return nil, fmt.Errorf("index %d out of range [0,%d)", idx, len(n.Content))
-			}
-			n = n.Content[idx]
-		default:
-			return nil, fmt.Errorf("cannot descend into node kind=%d at token %q", n.Kind, tok)
 		}
+		cur = next
 	}
-	return n, nil
+	return cur, nil
 }
 
 func (cli CLI) sortMappingNodeKeys(n *yaml.Node) {

@@ -1,4 +1,4 @@
-module github.com/RoryQ/yays
+module github.com/roryq/yays
 
 go 1.25.0
 
