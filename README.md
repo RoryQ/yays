@@ -33,6 +33,7 @@ Flags:
     - path: sort the sequence by the first field of each element (no per-element key sorting).
     - path[*]: sort keys of all mapping elements in the sequence (preserves sequence order).
     - path[0]: sort keys of the first element (preserves sequence order).
+  - If the node is a mapping or sequence.
     - path[*].to.nested: loop over all elements and sort the nested mapping/sequence for each element.
 
 ### Sort types
