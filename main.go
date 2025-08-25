@@ -9,16 +9,18 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
+	"github.com/earthboundkid/versioninfo/v2"
 	"gopkg.in/yaml.v3"
 )
 
 // CLI represents the command-line interface structure
 type CLI struct {
-	InputFile string   `name:"file" short:"f" help:"Input YAML file path" type:"existingfile" required:""`
-	YamlPaths []string `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop over sequences or mappings with [*], or index sequences with [N] (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order." required:""`
-	Write     bool     `name:"write" short:"w" help:"Write changes back to the input file instead of printing to stdout"`
-	SortType  string   `name:"sort" short:"t" help:"Sort type for mapping keys: 'alphanumeric' (default) or 'human' (common keys first, then the rest alphanumeric)" enum:"alphanumeric,human" default:"alphanumeric"`
-	Verbose   bool     `name:"verbose" short:"v" help:"Verbose output"`
+	InputFile string           `name:"file" short:"f" help:"Input YAML file path" type:"existingfile" required:""`
+	YamlPaths []string         `name:"yaml-path" short:"p" help:"YAML path(s) in dot notation. Bracket selectors [*] and [N] can appear at the end or mid-path to loop over sequences or mappings with [*], or index sequences with [N] (e.g., 'items[*].meta', 'servers[0].roles'). At the target: mappings have keys sorted; sequences are sorted by the first field of each element. Repeat -p to process multiple paths in order." required:""`
+	Write     bool             `name:"write" short:"w" help:"Write changes back to the input file instead of printing to stdout"`
+	SortType  string           `name:"sort" short:"t" help:"Sort type for mapping keys: 'alphanumeric' (default) or 'human' (common keys first, then the rest alphanumeric)" enum:"alphanumeric,human" default:"alphanumeric"`
+	Verbose   bool             `name:"verbose" short:"v" help:"Verbose output"`
+	Version   kong.VersionFlag `name:"version" short:"V" help:"Print version information and exit" version:"${version}"`
 }
 
 const description = `Yet Another Yaml Sorter`
@@ -28,6 +30,7 @@ func main() {
 	_ = kong.Parse(&cli,
 		kong.Name("yays"),
 		kong.Description(description),
+		kong.Vars{"version": versioninfo.Short()},
 		kong.UsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
 	)
